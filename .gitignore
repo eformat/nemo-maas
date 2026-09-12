@@ -1,0 +1,9 @@
+# Real secret material — never commit. Only *.example.env / *.secret.example are tracked.
+*.secret.env
+!*.secret.example.env
+secret.env
+*.rendered.yaml
+
+# Editor / OS noise
+.DS_Store
+*.swp

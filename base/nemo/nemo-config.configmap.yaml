@@ -1,0 +1,160 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nemo-config
+  namespace: nemo-guardrails
+data:
+  # NOTE: model endpoints below are cluster-specific and CANNOT be patched by kustomize
+  # (they live inside this embedded config.yaml string). Edit them directly here.
+  # Search for REPLACE_ME.
+  config.yaml: |
+    models:
+      - type: main
+        engine: openai
+        model: "llama-4-scout-17b-16e-w4a16"
+        api_key_env_var: OPENAI_API_KEY
+        parameters:
+          base_url: "https://maas.apps.ocp.cloud.rhai-tmm.dev/prelude-maas/llama-4-scout-17b-16e-w4a16/v1"
+      - type: "content_safety"
+        engine: nim
+        parameters:
+          base_url: "https://nemo-guardrails-voice-agents.apps.ocp.cloud.rhai-tmm.dev/v1"
+          model_name: "content-safety-detector"
+          api_key: REPLACE_ME_REMOTE_MODEL_TOKEN
+    rails:
+      config:
+        sensitive_data_detection:
+          input:
+            entities:
+              - EMAIL_ADDRESS
+          output:
+            entities:
+              - PERSON
+      input:
+        flows:
+          - detect sensitive data on input
+          - check forbidden words
+      output:
+        flows:
+          - detect sensitive data on output
+
+    # These are the default prompts released by Meta, except for policy O7, which was added to address direct insults.
+    prompts:
+      - task: content_safety_check_input $model=content_safety
+        content: |
+            Task: Check if there is unsafe content in the user or agent messages in the below conversation in accordance with our safety policy with the below categories. Provide a 'safe' or 'unsafe' rating for both the user message and the agent response. If there is unsafe content, please also provide a list of violated categories according to our safety policy below.
+
+            <BEGIN UNSAFE CONTENT CATEGORIES>
+            S1: Violence.
+            S2: Sexual.
+            S3: Criminal Planning/Confessions.
+            S4: Guns and Illegal Weapons.
+            S5: Controlled/Regulated Substances.
+            S6: Suicide and Self Harm.
+            S7: Sexual (minor).
+            S8: Hate/Identity Hate.
+            S9: PII/Privacy.
+            S10: Harassment.
+            S11: Threat.
+            S12: Profanity.
+            S13: Needs Caution.
+            S14: Other.
+            S15: Manipulation.
+            S16: Fraud/Deception.
+            S17: Malware.
+            S18: High Risk Gov Decision Making.
+            S19: Political/Misinformation/Conspiracy.
+            S20: Copyright/Trademark/Plagiarism.
+            S21: Unauthorized Advice.
+            S22: Illegal Activity.
+            S23: Immoral/Unethical.
+            <END UNSAFE CONTENT CATEGORIES>
+
+            <BEGIN CONVERSATION>
+
+            user: {{ user_input }}
+
+            <END CONVERSATION>
+
+            Provide your safety assessment for the above conversation in the below output JSON format:
+            {"User Safety": safe or unsafe rating for the user message, "Response Safety": safe or unsafe rating for the agent response. Omit if no agent response present. "Safety Categories": a comma-separated list of applicable safety categories from the provided taxonomy. Omit if all safe.}
+
+            Do not include anything other than the output JSON in your response.
+            Output JSON:
+        output_parser: nemoguard_parse_prompt_safety
+        max_tokens: 50
+      - task: content_safety_check_output $model=content_safety
+        content: |
+            Task: Check if there is unsafe content in the user or agent messages in the below conversation in accordance with our safety policy with the below categories. Provide a 'safe' or 'unsafe' rating for both the user message and the agent response. If there is unsafe content, please also provide a list of violated categories according to our safety policy below.
+
+            <BEGIN UNSAFE CONTENT CATEGORIES>
+            S1: Violence.
+            S2: Sexual.
+            S3: Criminal Planning/Confessions.
+            S4: Guns and Illegal Weapons.
+            S5: Controlled/Regulated Substances.
+            S6: Suicide and Self Harm.
+            S7: Sexual (minor).
+            S8: Hate/Identity Hate.
+            S9: PII/Privacy.
+            S10: Harassment.
+            S11: Threat.
+            S12: Profanity.
+            S13: Needs Caution.
+            S14: Other.
+            S15: Manipulation.
+            S16: Fraud/Deception.
+            S17: Malware.
+            S18: High Risk Gov Decision Making.
+            S19: Political/Misinformation/Conspiracy.
+            S20: Copyright/Trademark/Plagiarism.
+            S21: Unauthorized Advice.
+            S22: Illegal Activity.
+            S23: Immoral/Unethical.
+            <END UNSAFE CONTENT CATEGORIES>
+
+            <BEGIN CONVERSATION>
+
+            user: {{ user_input }}
+
+            response: agent: {{ bot_response }}
+
+            <END CONVERSATION>
+
+            Provide your safety assessment for the above conversation in the below output JSON format:
+            {"User Safety": safe or unsafe rating for the user message, "Response Safety": safe or unsafe rating for the agent response. Omit if no agent response present. "Safety Categories": a comma-separated list of applicable safety categories from the provided taxonomy. Omit if all safe.}
+
+            Do not include anything other than the output JSON in your response.
+            Output JSON:
+        output_parser: nemoguard_parse_response_safety
+        max_tokens: 50
+
+  rails.co: |
+    define flow check forbidden words
+      $forbidden_result = execute check_forbidden_words
+      if $forbidden_result != "allowed"
+        bot inform forbidden content
+        stop
+
+    define bot inform forbidden content
+      "I can't help with that type of request. Please ask something else."
+
+  actions.py: |
+    from typing import Optional
+    from nemoguardrails.actions import action
+
+    @action(is_system_action=True)
+    async def check_forbidden_words(context: Optional[dict] = None) -> str:
+        """Check for forbidden words or topics."""
+        user_message = context.get("user_message", "").lower()
+        forbidden_topics = {
+            "security": ["password", "hack", "exploit", "vulnerability"],
+            "inappropriate": ["violence", "illegal", "harmful"],
+            "competitors": ["chatgpt", "openai", "claude", "anthropic"],
+        }
+        for category, words in forbidden_topics.items():
+            for word in words:
+                if word in user_message:
+                    return f"blocked_{category}_{word}"
+        return "allowed"

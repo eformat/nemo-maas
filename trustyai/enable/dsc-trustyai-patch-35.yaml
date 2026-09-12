@@ -1,0 +1,9 @@
+---
+# Strategic-merge patch enabling the Gen AI playground backend on the existing DataScienceCluster
+# for RHOAI 3.5+. In 3.5 the playground is backed by the OGX operator (not llamastackoperator).
+# Apply with: oc patch datasciencecluster default-dsc --type merge \
+#   --patch-file manifests/05-maas/enable/dsc-genai-patch-35.yaml
+spec:
+  components:
+    trustyai:
+      managementState: Managed

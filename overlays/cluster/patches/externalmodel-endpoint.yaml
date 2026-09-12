@@ -1,0 +1,10 @@
+---
+# Set the NeMo Service endpoint the ExternalModel points at.
+# Confirm the operator-created Service with `oc get svc -n nemo-guardrails` and update if it differs.
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: ExternalModel
+metadata:
+  name: llama-4-scout-17b-16e-w4a16
+  namespace: nemo-guardrails
+spec:
+  endpoint: nemo-guardrails-direct.nemo-guardrails.svc.cluster.local

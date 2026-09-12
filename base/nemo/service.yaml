@@ -1,0 +1,18 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nemo-guardrails-direct
+  namespace: nemo-guardrails
+spec:
+  selector:
+    app.kubernetes.io/instance: nemo-guardrails
+  ports:
+    - name: https
+      port: 443
+      targetPort: 8000
+      protocol: TCP
+    - name: http
+      port: 8000
+      targetPort: 8000
+      protocol: TCP

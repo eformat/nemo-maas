@@ -1,0 +1,24 @@
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: payload-processing-to-nemo
+  namespace: openshift-ingress
+spec:
+  podSelector:
+    matchExpressions:
+      - key: maas.opendatahub.io/tenant-instance
+        operator: In
+        values:
+          - payload-processing
+          - payload-pre-processing
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: nemo-guardrails
+      ports:
+        - port: 8000
+          protocol: TCP
+  policyTypes:
+    - Egress

@@ -1,0 +1,18 @@
+---
+# Cluster-specific access groups + token rate limits for the NeMo MaaS model.
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: MaaSSubscription
+metadata:
+  name: nemo-guardrails-subscription
+  namespace: models-as-a-service
+spec:
+  owner:
+    groups:
+      - name: system:authenticated
+    users: []
+  modelRefs:
+    - name: llama-4-scout-17b-16e-w4a16
+      namespace: nemo-guardrails
+      tokenRateLimits:
+        - limit: 50000
+          window: 1m

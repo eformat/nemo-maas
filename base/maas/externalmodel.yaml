@@ -1,0 +1,22 @@
+---
+# Part A — publish the in-cluster NeMo chat proxy as a MaaS model.
+# Mirrors the proven llm-katan/sim-openai ExternalModel pattern, pointing at the
+# in-cluster NeMo Service (plaintext, no token — NeMo has auth disabled).
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: ExternalModel
+metadata:
+  name: llama-4-scout-17b-16e-w4a16
+  namespace: nemo-guardrails
+  annotations:
+    maas.opendatahub.io/tls: "false"
+spec:
+  provider: openai
+  # NeMo's chat proxy generates AND guards; MaaS appends /v1/chat/completions to this host.
+  # Confirm the operator-created Service name/port with `oc get svc -n nemo-guardrails`
+  # and update here + the overlay patch if it differs.
+  endpoint: nemo-guardrails-direct.nemo-guardrails.svc.cluster.local
+  targetModel: llama-4-scout-17b-16e-w4a16
+  # credentialRef is required by the ExternalModel CRD. NeMo has auth disabled and ignores the
+  # injected Authorization header, so this points at a dummy placeholder Secret (credential.secret.yaml).
+  credentialRef:
+    name: llama-4-scout-cred

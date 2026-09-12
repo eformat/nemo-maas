@@ -1,0 +1,15 @@
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: nemo-guardrails-direct
+  namespace: nemo-guardrails
+spec:
+  to:
+    kind: Service
+    name: nemo-guardrails-direct
+  port:
+    targetPort: 8000
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

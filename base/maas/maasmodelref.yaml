@@ -1,0 +1,11 @@
+---
+# Creates the HTTPRoute for the NeMo model on the MaaS gateway.
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: MaaSModelRef
+metadata:
+  name: llama-4-scout-17b-16e-w4a16
+  namespace: nemo-guardrails
+spec:
+  modelRef:
+    kind: ExternalModel
+    name: llama-4-scout-17b-16e-w4a16

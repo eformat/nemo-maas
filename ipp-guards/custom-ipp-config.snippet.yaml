@@ -1,0 +1,43 @@
+# Part B — additions to the operator-owned ConfigMap
+#   ConfigMap: payload-processing-plugins  (namespace: openshift-ingress)
+#   data key:  custom-ipp-config.yaml
+#
+# This file documents the INTENDED end-state additions. It is NOT applied directly and is NOT part
+# of the kustomize graph — that ConfigMap is owned by maas-controller (annotated
+# opendatahub.io/managed: "false"). Use ./apply-guards.sh to merge these in idempotently.
+#
+# 1) Add these two entries to the top-level `plugins:` list:
+
+plugins:
+  - type: nemo-request-guard
+    name: nemo-input
+    parameters:
+      nemoURL: http://nemo-guardrails-direct.nemo-guardrails.svc.cluster.local:443/v1/guardrail/checks
+      timeoutSeconds: 10
+  - type: nemo-response-guard
+    name: nemo-output
+    parameters:
+      nemoURL: http://nemo-guardrails-direct.nemo-guardrails.svc.cluster.local:443/v1/guardrail/checks
+      timeoutSeconds: 10
+
+# 2) Wire the refs into profiles[name=default].plugins:
+#    - request:  prepend `- pluginRef: nemo-input`  (input rails run BEFORE model-provider-resolver)
+#    - response: append  `- pluginRef: nemo-output`
+#
+# Resulting default profile:
+#
+#   profiles:
+#     - name: default
+#       plugins:
+#         request:
+#           - pluginRef: nemo-input            # <-- added (first)
+#           - pluginRef: maas-headers-guard
+#           - pluginRef: stream-usage-enforcer
+#           - pluginRef: model-provider-resolver
+#           - pluginRef: api-translation
+#           - pluginRef: apikey-injection
+#         response:
+#           - pluginRef: nemo-output           # <-- added
+#
+# The guard calls go DIRECTLY to the NeMo Service (not via the gateway) → no re-entrant hop / no
+# routing loop. NeMo has auth disabled, so no token is sent (the plugins send only Content-Type).

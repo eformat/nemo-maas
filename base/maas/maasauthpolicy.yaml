@@ -1,0 +1,15 @@
+---
+# External-client auth for the NeMo MaaS model (gateway-enforced).
+apiVersion: maas.opendatahub.io/v1alpha1
+kind: MaaSAuthPolicy
+metadata:
+  name: nemo-guardrails-access
+  namespace: models-as-a-service
+spec:
+  modelRefs:
+    - name: llama-4-scout-17b-16e-w4a16
+      namespace: nemo-guardrails
+  subjects:
+    groups:
+      - name: system:authenticated
+    users: []

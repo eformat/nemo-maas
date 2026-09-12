@@ -1,0 +1,27 @@
+---
+apiVersion: trustyai.opendatahub.io/v1alpha1
+kind: NemoGuardrails
+metadata:
+  name: nemo-guardrails
+  namespace: nemo-guardrails
+  annotations:
+    # Auth DISABLED so in-cluster IPP guard plugins can call /v1/guardrail/checks token-free.
+    security.opendatahub.io/enable-auth: "false"
+spec:
+  nemoConfigs:
+    - name: llama-4-scout-17b-16e-w4a16
+      configMaps:
+        - nemo-config
+  env:
+    # Token for NeMo's REMOTE main + content_safety backends (the models it delegates to).
+    # Provided by the overlay secretGenerator as Secret "api-token-secret" (key: token).
+    - name: "OPENAI_API_KEY"
+      valueFrom:
+        secretKeyRef:
+          name: "api-token-secret"
+          key: "token"
+    - name: "NVIDIA_API_KEY"
+      valueFrom:
+        secretKeyRef:
+          name: "nim-token-secret"
+          key: "token"

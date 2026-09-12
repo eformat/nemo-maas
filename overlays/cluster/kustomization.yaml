@@ -1,0 +1,31 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Root apply target for cluster "6v5xt".
+#   oc apply -k overlays/cluster
+
+resources:
+  - ../../base/nemo
+  - ../../base/maas
+
+# Real remote-model token for NeMo (gitignored source file). NeMo reads this as OPENAI_API_KEY.
+# disableNameSuffixHash keeps the name stable ("api-token-secret") so the NemoGuardrails CR's
+# secretKeyRef resolves — CRD fields are not rewritten by kustomize's name-reference transformer.
+secretGenerator:
+  - name: api-token-secret
+    namespace: nemo-guardrails
+    envs:
+      - nemo-remote.secret.env
+  - name: nim-token-secret
+    namespace: nemo-guardrails
+    envs:
+      - nim-remote.secret.env
+
+generatorOptions:
+  disableNameSuffixHash: true
+
+# Cluster-specific overrides for real API fields. (The NeMo model *endpoints* are NOT here — they
+# live inside the ConfigMap's embedded config.yaml, which kustomize can't patch; edit that file.)
+patches:
+  - path: patches/externalmodel-endpoint.yaml
+  - path: patches/subscription-limits.yaml
