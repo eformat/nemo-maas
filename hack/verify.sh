@@ -72,11 +72,20 @@ verify_maas() {
   if [[ -z "$MAAS_BASE" || -z "$MAAS_TOKEN" ]]; then
     info "set MAAS_BASE + MAAS_TOKEN to exercise the gateway route (skipping live call)"; return
   fi
-  local url="${MAAS_BASE%/}/v1/chat/completions" code_safe code_bad
-  code_safe="$(curl -s --max-time 120 -o /dev/null -w '%{http_code}' "$url" -H "Authorization: Bearer $MAAS_TOKEN" -H 'Content-Type: application/json' -d "$(chat_body "llama-4-scout-17b-16e-w4a16" "$SAFE_PROMPT")")"
+  local url="${MAAS_BASE%/}/v1/chat/completions" code_safe code_bad body_safe
+  body_safe="$(mktemp)"
+  code_safe="$(curl -s --max-time 120 -o "$body_safe" -w '%{http_code}' "$url" -H "Authorization: Bearer $MAAS_TOKEN" -H 'Content-Type: application/json' -d "$(chat_body "llama-4-scout-17b-16e-w4a16" "$SAFE_PROMPT")")"
   code_bad="$(curl -s --max-time 120 -o /dev/null -w '%{http_code}' "$url" -H "Authorization: Bearer $MAAS_TOKEN" -H 'Content-Type: application/json' -d "$(chat_body "llama-4-scout-17b-16e-w4a16" "$BAD_PROMPT")")"
   info "safe HTTP=$code_safe  bad HTTP=$code_bad"
-  [[ "$code_safe" == "200" ]] && pass "safe prompt -> 200" || fail "safe prompt -> $code_safe"
+  if [[ "$code_safe" == "200" ]]; then
+    pass "safe prompt -> 200"
+  else
+    fail "safe prompt -> $code_safe"
+    if grep -q 'unknown NeMo guardrails status' "$body_safe" 2>/dev/null || [[ "$code_safe" == "403" || "$code_safe" == "500" ]]; then
+      info "known RHOAI bug: guard plugin rejects NeMo 'success' status (needs PR #434)"
+    fi
+  fi
+  rm -f "$body_safe"
   # NeMo's own rails refuse in-band (200 with a refusal message) OR the response guard blocks (403).
   [[ "$code_bad" == "200" || "$code_bad" == "403" ]] && pass "bad prompt -> $code_bad (refused/blocked)" || fail "bad prompt -> $code_bad"
 }
@@ -96,11 +105,19 @@ verify_guards() {
   if [[ -z "$MAAS_BASE" || -z "$MAAS_TOKEN" ]]; then
     info "set MAAS_BASE + MAAS_TOKEN to exercise the guarded gateway route (skipping live call)"; return
   fi
-  local url="${MAAS_BASE%/}/${OTHER_MODEL}/v1/chat/completions" code_safe code_bad
-  code_safe="$(curl -s -o /dev/null -w '%{http_code}' "$url" -H "Authorization: Bearer $MAAS_TOKEN" -H 'Content-Type: application/json' -d "$(chat_body "$OTHER_MODEL" "$SAFE_PROMPT")")"
-  code_bad="$(curl -s -o /dev/null -w '%{http_code}' "$url" -H "Authorization: Bearer $MAAS_TOKEN" -H 'Content-Type: application/json' -d "$(chat_body "$OTHER_MODEL" "$BAD_PROMPT")")"
+  local url="${MAAS_BASE%/}/${OTHER_MODEL}/v1/chat/completions" code_safe code_bad body_safe
+  body_safe="$(mktemp)"
+  code_safe="$(curl -s --max-time 30 -o "$body_safe" -w '%{http_code}' "$url" -H "Authorization: Bearer $MAAS_TOKEN" -H 'Content-Type: application/json' -d "$(chat_body "$OTHER_MODEL" "$SAFE_PROMPT")")"
+  code_bad="$(curl -s --max-time 30 -o /dev/null -w '%{http_code}' "$url" -H "Authorization: Bearer $MAAS_TOKEN" -H 'Content-Type: application/json' -d "$(chat_body "$OTHER_MODEL" "$BAD_PROMPT")")"
   info "safe HTTP=$code_safe  bad HTTP=$code_bad"
-  [[ "$code_safe" == "200" ]] && pass "safe prompt -> 200" || fail "safe prompt -> $code_safe"
+  if [[ "$code_safe" == "200" ]]; then
+    pass "safe prompt -> 200"
+  else
+    fail "safe prompt -> $code_safe"
+    grep -q 'unknown NeMo guardrails status' "$body_safe" 2>/dev/null \
+      && info "known RHOAI bug: guard plugin rejects NeMo 'success' status (needs PR #434)"
+  fi
+  rm -f "$body_safe"
   [[ "$code_bad" == "403" ]]  && pass "forbidden prompt -> 403 (blocked by NeMo guardrails)" || fail "forbidden prompt -> $code_bad (want 403)"
   info "to test fail-closed: scale NeMo to 0 and expect 503 on guarded calls"
 }

@@ -124,6 +124,8 @@ hack/        verify.sh — curl checks for Part 0 / A / B
    ```
 6. Verify:
    ```bash
+   export MAAS_BASE=https://maas.apps.cluster...
+   export API_KEY=sk-...
    ./hack/verify.sh
    ```
 
