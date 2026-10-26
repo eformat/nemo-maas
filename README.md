@@ -144,16 +144,16 @@ praxis-ai `ai_guardrails` filter. **Verified working on prelude2 (2026-10-26)** 
 
 ```bash
 export KUBECONFIG=~/.kube/config.prelude2
-# 1. Flip the dataplane selector (absent already selects Praxis on EA2; set it explicitly)
-oc annotate maastenantconfig default-tenant -n models-as-a-service \
-  maas.opendatahub.io/payload-processing-type=praxis --overwrite
+# Annotates payload-processing-type=praxis, polls the handoff (cleanup-complete -> steady,
+# praxis Deployment Ready), optionally chains apply-guards.sh with CHAIN_GUARDS=true:
+./praxis-guards/switch-to-praxis.sh
 
-# 2. Watch the handshake: maas-controller deletes the IPP operands, writes
-#    payload-processing-status=cleanup-complete; ai-gateway-controller CAS-claims
-#    it to steady and applies the per-tenant praxis-extproc
-oc get maastenantconfig default-tenant -n models-as-a-service \
-  -o jsonpath='status={.metadata.annotations.maas\.opendatahub\.io/payload-processing-status}{"\n"}'
-oc get deploy -n openshift-ingress | grep payload   # IPP Deployments gone, praxis ones come up
+# Manual equivalent (what the script does):
+#   oc annotate maastenantconfig default-tenant -n models-as-a-service \
+#     maas.opendatahub.io/payload-processing-type=praxis --overwrite
+#   oc get maastenantconfig default-tenant -n models-as-a-service \
+#     -o jsonpath='status={.metadata.annotations.maas\.opendatahub\.io/payload-processing-status}{"\n"}'
+#   oc get deploy -n openshift-ingress | grep payload   # IPP Deployments gone, praxis ones come up
 ```
 
 > **The `force-payload-processing-migration` gate** (RHOAIENG-98846): on maas-controller builds that
@@ -175,11 +175,19 @@ oc get deploy -n openshift-ingress | grep payload   # IPP Deployments gone, prax
 ### Rollback
 
 ```bash
-# Switch back to IPP — maas-controller reclaims the dataplane names
-oc annotate maastenantconfig default-tenant -n models-as-a-service \
-  maas.opendatahub.io/payload-processing-type=ipp --overwrite
-# Then restore the Part-B Nemo wiring on IPP
-./ipp-guards/apply-guards.sh
+# Switch back to IPP — polls for maas-controller to reclaim the dataplane, then
+# optionally chains ipp-guards/apply-guards.sh with CHAIN_GUARDS=true:
+./praxis-guards/switch-to-ipp.sh
+```
+
+### API key for the probes
+
+On a guarded tenant the MaaS management API POSTs (`/v1/api-keys`) 500 through the gateway (the
+guard rejects non-Chat-Completions bodies), so create the key directly against maas-api:
+
+```bash
+./hack/create-api-key.sh    # port-forward + crafted identity headers; saves MAAS_API_KEY to
+                            # overlays/cluster/maas-api-key.secret.env (gitignored)
 ```
 
 ## Testing with curl

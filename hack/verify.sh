@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 #
-# Verification for the nemo-maas deployment. Runs three independent checks; each can be run alone:
+# Verification for the nemo-maas deployment. Runs independent checks; each can be run alone:
 #   ./verify.sh nemo      Part 0 — in-cluster NeMo directly (port-forward)
 #   ./verify.sh maas      Part A — NeMo published as a MaaS model (through the gateway)
-#   ./verify.sh guards    Part B — guards enforced on ANOTHER MaaS model
-#   ./verify.sh all       (default) run all three
+#   ./verify.sh guards    Part B — guards enforced on ANOTHER MaaS model (IPP dataplane)
+#   ./verify.sh praxis    Part C — guards enforced on the PRAXIS dataplane (EA2)
+#   ./verify.sh all       (default) run Parts 0 / A / B (Part C is separate: on a praxis-converted
+#                          tenant the Part-B IPP checks fail by design)
 #
 # Requires: oc (logged in), curl, jq.
 set -uo pipefail
@@ -21,6 +23,13 @@ MAAS_BASE="${MAAS_BASE:-}"
 MAAS_TOKEN="${MAAS_TOKEN:-${API_KEY:-}}"
 NEMO_ROUTE="${NEMO_ROUTE:-nemo-guardrails/nemo-guardrails}"
 OTHER_MODEL="${OTHER_MODEL:-qwen25-05b-maas}"
+
+# Part C (Praxis dataplane, EA2):
+#   PRAXIS_MODEL  path segment for an existing MaaS model served through the praxis dataplane
+PRAXIS_NS="${PRAXIS_NS:-openshift-ingress}"
+PRAXIS_MODEL="${PRAXIS_MODEL:-lab-user-dev/nemotron-3-nano-30b-a3b}"
+MTC_NS="${MTC_NS:-models-as-a-service}"
+MTC_NAME="${MTC_NAME:-default-tenant}"
 
 SAFE_PROMPT='What is 2+2?'
 # forbidden-words action trips on "hack"; content-safety/PII rails also apply.
@@ -122,6 +131,52 @@ verify_guards() {
   info "to test fail-closed: scale NeMo to 0 and expect 503 on guarded calls"
 }
 
+verify_praxis() {
+  echo "== Part C: guards on the PRAXIS dataplane ($PRAXIS_MODEL) =="
+  local mtc
+  mtc="$(oc get maastenantconfig "$MTC_NAME" -n "$MTC_NS" \
+    -o jsonpath='{.metadata.annotations.maas\.opendatahub\.io/payload-processing-type}{" "}{.metadata.annotations.maas\.opendatahub\.io/payload-processing-status}' 2>/dev/null)"
+  info "MaasTenantConfig type/status: ${mtc:-<both absent>}"
+  [[ "$mtc" == praxis* ]] && pass "tenant selects praxis" \
+    || fail "tenant is not praxis-selected (run praxis-guards/switch-to-praxis.sh)"
+
+  local cfg
+  cfg="$(oc get configmap payload-processing-plugins -n "$PRAXIS_NS" -o jsonpath='{.data.extproc\.yaml}' 2>/dev/null)"
+  grep -q 'filter: ai_guardrails' <<<"$cfg" && pass "ai_guardrails wired in the praxis extproc config" \
+    || fail "ai_guardrails not in the praxis config (run praxis-guards/apply-guards.sh)"
+
+  local pod_ready
+  pod_ready="$(oc get deploy payload-processing -n "$PRAXIS_NS" \
+    -o jsonpath='{.status.conditions[?(@.type=="Available")].status}' 2>/dev/null)"
+  [[ "$pod_ready" == "True" ]] && pass "praxis payload-processing Deployment Available" \
+    || fail "praxis payload-processing not Available"
+
+  if [[ -z "$MAAS_BASE" || -z "$MAAS_TOKEN" ]]; then
+    info "set MAAS_BASE + MAAS_TOKEN to exercise the guarded gateway route (skipping live call)"; return
+  fi
+  local body_model="${PRAXIS_MODEL##*/}"
+  local url="${MAAS_BASE%/}/${PRAXIS_MODEL}/v1/chat/completions" code_safe code_bad body_bad
+  body_bad="$(mktemp)"
+  code_safe="$(curl -s --max-time 60 -o /dev/null -w '%{http_code}' "$url" -H "Authorization: Bearer $MAAS_TOKEN" -H 'Content-Type: application/json' -d "$(chat_body "$body_model" "$SAFE_PROMPT")")"
+  code_bad="$(curl -s --max-time 45 -o "$body_bad" -w '%{http_code}' "$url" -H "Authorization: Bearer $MAAS_TOKEN" -H 'Content-Type: application/json' -d "$(chat_body "$body_model" "$BAD_PROMPT")")"
+  info "safe HTTP=$code_safe  bad HTTP=$code_bad"
+  if [[ "$code_safe" == "200" ]]; then
+    pass "safe prompt -> 200 (deployed praxis-ai maps NeMo 'success' correctly)"
+  else
+    fail "safe prompt -> $code_safe"
+    info "fail-closed on the 'success'-vs-'passed' verdict mismatch is a praxis-ai HEAD risk, not the deployed build"
+  fi
+  if [[ "$code_bad" == "403" ]]; then
+    local rail
+    rail="$(tr -d '\n' <"$body_bad" | head -c 120)"
+    pass "forbidden prompt -> 403 (rail label: ${rail:-<empty>})"
+  else
+    fail "forbidden prompt -> $code_bad (want 403 with the NeMo rail name)"
+  fi
+  rm -f "$body_bad"
+  info "rail label = the NeMo flow name (nemo-config CM, rails.input.flows); rename it to change the body"
+}
+
 for bin in oc curl jq; do command -v "$bin" >/dev/null 2>&1 || { echo "ERROR: '$bin' required" >&2; exit 1; }; done
 
 # Auto-fix: ensure the DestinationRule TLS mode is DISABLE (reconciler keeps reverting to SIMPLE)
@@ -140,8 +195,9 @@ case "${1:-all}" in
   nemo)   verify_nemo ;;
   maas)   verify_maas ;;
   guards) verify_guards ;;
+  praxis) verify_praxis ;;
   all)    verify_nemo; verify_maas; verify_guards ;;
-  *) echo "usage: $0 [nemo|maas|guards|all]" >&2; exit 2 ;;
+  *) echo "usage: $0 [nemo|maas|guards|praxis|all]" >&2; exit 2 ;;
 esac
 
 echo
