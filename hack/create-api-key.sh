@@ -60,13 +60,17 @@ EXPIRES="$(jq -r .expiresAt <<<"$RESP" 2>/dev/null || echo "?")"
 PREFIX="$(jq -r .keyPrefix <<<"$RESP" 2>/dev/null || echo "${KEY:0:16}...")"
 
 mkdir -p "$(dirname "$SECRET_ENV")"
+# `export` in the file itself so `source <file>` exports every var to child scripts.
 cat > "$SECRET_ENV" <<EOF
-MAAS_API_KEY=$KEY
-MAAS_API_KEY_NAME=$KEY_NAME
-MAAS_API_KEY_EXPIRES_AT=$EXPIRES
+export MAAS_TOKEN=$KEY
+export API_KEY=$KEY
+export MAAS_API_KEY=$KEY
+export MAAS_API_KEY_NAME=$KEY_NAME
+export MAAS_API_KEY_EXPIRES_AT=$EXPIRES
 EOF
 chmod 600 "$SECRET_ENV"
 
 echo "==> Key created: $PREFIX (expires $EXPIRES)"
-echo "==> Saved to $SECRET_ENV (gitignored) — consumed by hack/verify.sh as MAAS_API_KEY"
+echo "==> Saved to $SECRET_ENV (gitignored) — MAAS_TOKEN/API_KEY consumed by hack/verify.sh"
+echo "    Usage: source $SECRET_ENV && ./hack/verify.sh praxis"
 echo "    Full key is NOT printed; read it with: source $SECRET_ENV"
