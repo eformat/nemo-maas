@@ -8,6 +8,18 @@ filter, which calls the same in-cluster NeMo check-only endpoint as the IPP Part
 This is the Praxis counterpart of `../ipp-guards/apply-guards.sh`. **Verified working on prelude2
 (2026-10-26)**: blocked prompts → `403` with the NeMo rail name, safe prompts → `200` passthrough.
 
+## Scripts
+
+| Script | What it does |
+|---|---|
+| `switch-to-praxis.sh` | Annotates the MTC `payload-processing-type=praxis`, polls the handoff to `steady` (praxis Deployment Ready); `CHAIN_GUARDS=true` chains `apply-guards.sh` |
+| `switch-to-ipp.sh` | Rollback: annotates `=ipp`, polls for maas-controller to reclaim the dataplane (IPP image back, Ready); `CHAIN_GUARDS=true` chains `../ipp-guards/apply-guards.sh` |
+| `apply-guards.sh` | Patches the praxis plugins CM (`extproc.yaml`) with the `ai_guardrails` filter + rollout restart (idempotent) |
+| `remove-guards.sh` | Strips the `ai_guardrails` filter + rollout restart (idempotent; reverses `apply-guards.sh`) |
+
+Shared env: `MTC_NS` (models-as-a-service), `MTC_NAME` (default-tenant), `TIMEOUT` (600s),
+`POLL` (5s).
+
 ## The two plugin engines (why this is not Part B)
 
 | | IPP (Part B) | Praxis (Part C) |
@@ -63,9 +75,11 @@ constant string.
 ## Deploy
 
 ```bash
-# 0. Switch the tenant to Praxis first (see ../README.md Part C):
-oc annotate maastenantconfig default-tenant -n models-as-a-service \
-  maas.opendatahub.io/payload-processing-type=praxis --overwrite
+# 0. Switch the tenant to Praxis first (polls the handoff to steady):
+./switch-to-praxis.sh          # CHAIN_GUARDS=true chains apply-guards.sh
+#   Manual equivalent:
+#   oc annotate maastenantconfig default-tenant -n models-as-a-service \
+#     maas.opendatahub.io/payload-processing-type=praxis --overwrite
 
 # 1. Wire the guardrails
 ./apply-guards.sh
