@@ -40,15 +40,19 @@ flowchart TD
 
     subgraph cluster["OpenShift Cluster · CPU-only"]
         gateway["MaaS Gateway<br/>Envoy · BBR · apikey injection"]
-        ipp["IPP Guard Plugins<br/>nemo-input · nemo-output"]
+        ipp["IPP Guard Plugins (Part B · 3.5)<br/>nemo-input · nemo-output"]
+        praxis["Praxis ext_proc (Part C · 3.6 EA2)<br/>ai_guardrails · nemo provider"]
         nemo["NeMo Guardrails<br/>forbidden-words · PII"]
         model["Other Model<br/>e.g. qwen25-05b"]
 
         gateway -- "Part A · BBR" --> nemo
         gateway -. "Part B" .-> model
-        gateway -. "ext_proc" .-> ipp
+        gateway -. "ext_proc (IPP)" .-> ipp
         ipp -. "/v1/guardrail/checks" .-> nemo
         ipp ~~~ model
+        gateway == "ext_proc (Praxis)" ==> praxis
+        praxis -- "/v1/guardrail/checks" --> nemo
+        praxis ~~~ model
     end
 
     subgraph remote_cluster["Remote OpenShift Cluster · GPU"]
@@ -63,6 +67,15 @@ NeMo, which runs the rails, generates via the remote LLM, and returns a guarded 
 
 **Part B** (dashed): caller sends `model=qwen25-05b-maas`. The IPP guard plugins intercept via
 ext_proc, call NeMo's `/v1/guardrail/checks`, and block or allow before/after the model responds.
+
+**Part C** (thick): same as Part B but on the **Praxis** dataplane — the tenant's
+`MaasTenantConfig` is switched to `payload-processing-type=praxis`, the praxis ext_proc carries the
+praxis-ai `ai_guardrails` filter (a chain filter, not an llm-d plugin), and it calls the same
+NeMo `/v1/guardrail/checks` endpoint. Live on prelude2. On this path a user **cannot** select a
+guardrail config per request (`guardrails.config_id` in the chat body is forwarded to the model,
+not to NeMo — the filter constructs its own checks request); the praxis path is operator-configured
+only. Per-request user selection works only in **Part A** (the body reaches NeMo's chat endpoint
+directly).
 
 ## Prerequisites
 
@@ -491,6 +504,12 @@ absent AND the plugins-CM migration gate allows AND no API-translation compatibi
 fires only on builds that have it; `opendatahub.io/managed=false` does NOT block IPP cleanup by
 design (switch-off removes the whole IPP name set so the other controller can recreate it in its own
 schema).
+
+**Where to grep during a switch**: `oc logs deploy/maas-controller -n redhat-ods-applications`
+carries the maas-controller side (`Deleting IPP resource while enabling Praxis`, once per resource;
+`cleanup IPP resources: ...` on retries); `oc logs deploy/ai-gateway-controller -n
+redhat-ods-applications` carries the AGC side (`MaasTenantConfig opted into praxis ...`,
+`praxis-extproc install applied`). Pod logs reset on controller restart — capture at flip time.
 
 ## Other caveats
 
