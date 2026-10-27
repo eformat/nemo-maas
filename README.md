@@ -77,6 +77,66 @@ not to NeMo — the filter constructs its own checks request); the praxis path i
 only. Per-request user selection works only in **Part A** (the body reaches NeMo's chat endpoint
 directly).
 
+**Part A through the MaaS gateway (verified on prelude2, 2026-10-27).** With the
+`ExternalModel`+`ExternalProvider` (AGC `inference.opendatahub.io` schema) applied, the AGC
+publishes the model and the caller **selects the provider per request** via the
+`X-AI-Routing-Candidate` header (value `nemo-guardrails/<model>/nemo-guardrails/nemo-chat` — see
+the model's HTTPRoute `matches`); the body's `guardrails.config_id` reaches NeMo's chat endpoint
+and is echoed in the response, proving per-request config selection through the gateway:
+
+```
+GW=https://maas.apps.<cluster>
+CAND=nemo-guardrails/llama-4-scout-17b-16e-w4a16/nemo-guardrails/nemo-chat
+curl "$GW/v1/models" -H "Authorization: Bearer $MAAS_TOKEN"          # model listed, ready:true
+curl "$GW/nemo-guardrails/llama-4-scout-17b-16e-w4a16/v1/chat/completions" \
+  -H "Authorization: Bearer $MAAS_TOKEN" -H "X-AI-Routing-Candidate: $CAND" \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"llama-4-scout-17b-16e-w4a16","messages":[{"role":"user","content":"What is 2+2?"}],
+       "guardrails":{"config_id":"llama-4-scout-17b-16e-w4a16"}}'
+# 200; response ends with "guardrails":{"config_id":"llama-4-scout-17b-16e-w4a16"}
+```
+
+NeMo **input rails still protect this path at the model layer** (a disallowed prompt gets NeMo's
+self-check refusal, 200). The gateway-level `ai_guardrails` 403 lives on the IPP/praxis `ipp`
+ext_proc chain only — the ExternalModel route uses a dedicated `external-model` ext_proc lane.
+
+## AIGuardrail — the policy-driven guardrail binding (`aigateway.opendatahub.io/v1alpha1`)
+
+Complementary to the client-driven `guardrails.config_id`: an **AIGuardrail** is a named policy
+that binds a set of checks to a **NemoGuardrails** provider (TrustyAI). The AGC guardrail
+reconciler resolves the provider, evaluates the provider's `allowedConsumers` authorization,
+validates every check's `configId` against the provider's `nemoConfigs`, and publishes the
+accepted binding in status (`ResolvedRefs` / `Compatible` / `ProviderReady` / `Accepted` +
+`bindingRevision` + `providerEndpoint`). `base/maas/aiguardrail.yaml` applies one
+(`nemo-input-guardrail`, content-safety on the Input phase); check it with
+`./hack/verify.sh aiguardrail`.
+
+```yaml
+apiVersion: aigateway.opendatahub.io/v1alpha1
+kind: AIGuardrail
+metadata:
+  name: nemo-input-guardrail
+  namespace: nemo-guardrails        # same ns as the NemoGuardrails CR (allowedConsumers
+spec:                               # omitted defaults to Same-namespace consumers)
+  provider:
+    nemo:
+      ref: {name: nemo-guardrails, namespace: nemo-guardrails}
+    timeout: 10s                    # REQUIRED
+  checks:
+    - name: content-safety
+      configId: llama-4-scout-17b-16e-w4a16   # must match a NemoGuardrails nemoConfig
+      phases: [Input]                          # Input | Output
+```
+
+Status on prelude2 (2026-10-27): `ResolvedRefs True` / `Compatible True` / `Accepted False`.
+The gap: the reconciler reads **`NemoGuardrails.status.endpoint`**, which the TrustyAI operator
+does not publish yet — that gates `Accepted`. Enforcement (per-tenant catalog compile +
+`x-aigateway-guardrail-<hash>` trusted headers into Praxis so required guardrails don't depend
+on the client's `config_id`) is **RHAI-2520**
+(https://redhat.atlassian.net/browse/RHAI-2520), not landed — `config_id` remains the only
+working per-request selection path today. The two compose: once RHAI-2520 lands, AIGuardrail
+bindings make checks mandatory while `config_id` stays the per-request selector.
+
 ## Prerequisites
 
 - `oc`/`kubectl` with cluster admin (read + apply).
@@ -96,7 +156,8 @@ overlays/
   cluster/   cluster-specific: secrets + patchable maas fields
 ipp-guards/  Part B — out-of-band patch of the operator-owned IPP ConfigMap
 praxis-guards/  Part C — out-of-band patch of the controller-owned Praxis plugins ConfigMap
-hack/        verify.sh — curl checks for Part 0 / A / B
+hack/        verify.sh — curl checks for Part 0 / A / B, the through-gateway ExternalModel,
+             and the AIGuardrail binding
 ```
 
 `overlays/cluster` is the root apply target; it references `base/nemo` + `base/maas`.

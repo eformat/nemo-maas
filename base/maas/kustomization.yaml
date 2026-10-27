@@ -4,7 +4,9 @@ kind: Kustomization
 # Part A — NeMo chat proxy published as a MaaS model.
 resources:
   - externalmodel.yaml
+  - externalprovider.yaml
   - credential.secret.yaml
   - maasmodelref.yaml
   - maassubscription.yaml
   - maasauthpolicy.yaml
+  - aiguardrail.yaml

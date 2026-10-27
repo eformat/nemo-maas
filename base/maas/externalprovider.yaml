@@ -1,0 +1,24 @@
+---
+# Part C/A on the praxis path — the AGC inference schema (inference.opendatahub.io).
+# The maas.opendatahub.io ExternalModel CRD (the 3.5/IPP-era schema this file used to
+# target) is NOT reconciled by ai-gateway-controller on the praxis path — AGC watches
+# inference.opendatahub.io only. See the CRD-mismatch note in the repo README.
+#
+# Multiple ExternalProvider CRDs can share one NeMo endpoint; multiple
+# NemoGuardrails configs are selected per request via guardrails.config_id (Part A)
+# or pinned operator-side via the praxis ai_guardrails filter (Part C).
+apiVersion: inference.opendatahub.io/v1alpha1
+kind: ExternalProvider
+metadata:
+  name: nemo-chat
+  namespace: nemo-guardrails
+spec:
+  # NeMo's chat proxy generates AND guards. Auth is disabled on the NeMo Service;
+  # the credential Secret carries the REAL remote-model token — NeMo forwards the
+  # injected Authorization header to the remote main model via header forwarding.
+  provider: openai
+  endpoint: nemo-guardrails-direct.nemo-guardrails.svc.cluster.local
+  auth:
+    type: apikey
+    secretRef:
+      name: llama-4-scout-cred

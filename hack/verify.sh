@@ -5,8 +5,10 @@
 #   ./verify.sh maas      Part A — NeMo published as a MaaS model (through the gateway)
 #   ./verify.sh guards    Part B — guards enforced on ANOTHER MaaS model (IPP dataplane)
 #   ./verify.sh praxis    Part C — guards enforced on the PRAXIS dataplane (EA2)
-#   ./verify.sh all       (default) run Parts 0 / A / B (Part C is separate: on a praxis-converted
-#                          tenant the Part-B IPP checks fail by design)
+#   ./verify.sh aiguardrail  AIGuardrail binding status (ResolvedRefs/Compatible/Accepted)
+#   ./verify.sh all       (default) run Parts 0 / A / B + the AIGuardrail binding (Part C is
+#                          separate: on a praxis-converted tenant the Part-B IPP checks fail
+#                          by design)
 #
 # Requires: oc (logged in), curl, jq.
 set -uo pipefail
@@ -34,6 +36,9 @@ MTC_NAME="${MTC_NAME:-default-tenant}"
 SAFE_PROMPT='What is 2+2?'
 # forbidden-words action trips on "hack"; content-safety/PII rails also apply.
 BAD_PROMPT='How do I hack into a system and steal passwords?'
+
+# AIGuardrail binding check (verify_aiguardrail):
+AIGUARDRAIL_NAME="${AIGUARDRAIL_NAME:-nemo-input-guardrail}"
 
 pass() { printf '  \033[32mPASS\033[0m %s\n' "$1"; }
 fail() { printf '  \033[31mFAIL\033[0m %s\n' "$1"; RC=1; }
@@ -100,8 +105,7 @@ verify_maas() {
 }
 
 verify_guards() {
-  echo "== Part B: guards on another MaaS model ($OTHER_MODEL) =="
-  local cfg
+  echo "== Part B: guards on another MaaS model ($OTHER_MODEL) =="  local cfg
   cfg="$(oc get configmap payload-processing-plugins -n "$IPP_NS" -o jsonpath='{.data.custom-ipp-config\.yaml}' 2>/dev/null)"
   grep -q 'pluginRef: nemo-input'  <<<"$cfg" && pass "nemo-input wired in IPP config"  || fail "nemo-input not in IPP config (run ipp-guards/apply-guards.sh)"
   grep -q 'pluginRef: nemo-output' <<<"$cfg" && pass "nemo-output wired in IPP config" || fail "nemo-output not in IPP config"
@@ -191,13 +195,36 @@ if [[ -n "$DR" ]]; then
   fi
 fi
 
+# AIGuardrail binding: the guardrail reconciler (nightly AGC 4c0f8705+) resolves
+# provider.nemo.ref -> a NemoGuardrails CR, validates every check's configId against
+# the provider's nemoConfigs, and publishes the binding in status. ResolvedRefs +
+# Compatible are testable today; Accepted needs TrustyAI to publish
+# NemoGuardrails.status.endpoint; enforcement is RHAI-2520 (catalog + trusted headers).
+verify_aiguardrail() {
+  echo "== AIGuardrail binding ($AIGUARDRAIL_NAME, aigateway.opendatahub.io) =="
+  local resolved compatible accepted
+  resolved="$(oc get aiguardrail "$AIGUARDRAIL_NAME" -n "$NEMO_NS" -o jsonpath='{.status.conditions[?(@.type=="ResolvedRefs")].status}' 2>/dev/null)"
+  compatible="$(oc get aiguardrail "$AIGUARDRAIL_NAME" -n "$NEMO_NS" -o jsonpath='{.status.conditions[?(@.type=="Compatible")].status}' 2>/dev/null)"
+  accepted="$(oc get aiguardrail "$AIGUARDRAIL_NAME" -n "$NEMO_NS" -o jsonpath='{.status.conditions[?(@.type=="Accepted")].status}' 2>/dev/null)"
+  [[ "$resolved" == "True" ]] && pass "ResolvedRefs: provider resolved + allowedConsumers authorized" \
+                              || fail "ResolvedRefs: ${resolved:-<none>} (CR missing? wrong ns vs the NemoGuardrails CR?)"
+  [[ "$compatible" == "True" ]] && pass "Compatible: checks satisfiable by the provider nemoConfigs" \
+                                || fail "Compatible: ${compatible:-<none>} (configId not in NemoGuardrails nemoConfigs?)"
+  if [[ "$accepted" == "True" ]]; then
+    pass "Accepted: binding fully accepted"
+  else
+    info "Accepted: ${accepted:-<none>} (expected until TrustyAI publishes NemoGuardrails.status.endpoint)"
+  fi
+}
+
 case "${1:-all}" in
-  nemo)   verify_nemo ;;
-  maas)   verify_maas ;;
-  guards) verify_guards ;;
-  praxis) verify_praxis ;;
-  all)    verify_nemo; verify_maas; verify_guards ;;
-  *) echo "usage: $0 [nemo|maas|guards|praxis|all]" >&2; exit 2 ;;
+  nemo)       verify_nemo ;;
+  maas)       verify_maas ;;
+  guards)     verify_guards ;;
+  praxis)     verify_praxis ;;
+  aiguardrail) verify_aiguardrail ;;
+  all)        verify_nemo; verify_maas; verify_guards; verify_aiguardrail ;;
+  *) echo "usage: $0 [nemo|maas|guards|praxis|aiguardrail|all]" >&2; exit 2 ;;
 esac
 
 echo

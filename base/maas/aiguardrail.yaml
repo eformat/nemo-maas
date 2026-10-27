@@ -1,0 +1,35 @@
+---
+# AIGuardrail — the AGC guardrail policy binding (aigateway.opendatahub.io/v1alpha1,
+# CRD shipped with ai-gateway-controller nightly 4c0f8705+ / upstream config/self/crd).
+# The guardrail reconciler resolves provider.nemo.ref (a NemoGuardrails CR), evaluates
+# the provider's allowedConsumers authorization, validates every check's configId
+# against the provider's nemoConfigs discovery, and publishes the accepted binding in
+# status: conditions ResolvedRefs / Compatible / ProviderReady / Accepted + bindingRevision
+# + providerEndpoint.
+#
+# Known gaps on prelude2 (2026-10-27):
+# - Accepted stays False (ProviderNotReady / EndpointDiscoveryUnavailable): the
+#   reconciler reads NemoGuardrails.status.endpoint, which the TrustyAI operator on
+#   prelude2 does not publish (status: bbrPlugin/ca/conditions/mcpGateway/phase).
+# - Enforcement (per-tenant catalog compile + x-aigateway-guardrail-<hash> trusted
+#   headers into Praxis) is RHAI-2520 — NOT landed; guardrails.config_id remains the
+#   only working per-request selection path.
+# - allowedConsumers omitted on the NemoGuardrails CR defaults to Same-namespace:
+#   the AIGuardrail must live in the same namespace as the provider CR.
+# - spec.provider.timeout is REQUIRED.
+apiVersion: aigateway.opendatahub.io/v1alpha1
+kind: AIGuardrail
+metadata:
+  name: nemo-input-guardrail
+  namespace: nemo-guardrails
+spec:
+  provider:
+    nemo:
+      ref:
+        name: nemo-guardrails
+        namespace: nemo-guardrails
+    timeout: 10s
+  checks:
+    - name: content-safety
+      configId: llama-4-scout-17b-16e-w4a16
+      phases: [Input]
